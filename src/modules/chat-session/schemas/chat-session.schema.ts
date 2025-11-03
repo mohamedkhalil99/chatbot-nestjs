@@ -6,7 +6,7 @@ export type ChatSessionDocument = HydratedDocument<ChatSession>;
 
 @Schema({ timestamps: { createdAt: true, updatedAt: false } })
 export class ChatSession {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  @Prop({ type: Types.ObjectId, ref: User.name, required: true })
   user: User | Types.ObjectId;
 
   @Prop({ default: 'New Chat' })
