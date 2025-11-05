@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from '../user/schemas/user.schema';
+import * as bcrypt from 'bcrypt';
 
 interface GoogleUser {
   googleId: string;
@@ -56,6 +57,11 @@ export class AuthService {
       expiresIn: '7d',
     });
 
+    // save refresh token in DB
+    const hashedRefreshToken = await bcrypt.hash(refreshToken, 10);
+    user.refreshToken = hashedRefreshToken;
+    await user.save();
+
     // return type-safe object
     return {
       user: {
@@ -67,5 +73,60 @@ export class AuthService {
       accessToken,
       refreshToken,
     };
+  }
+
+  async refreshAccessToken(refreshToken: string): Promise<AuthTokens> {
+    try {
+      // Check the validity of the provided refresh token
+      const payload = await this.jwtService.verifyAsync(refreshToken, {
+        secret: process.env.REFRESH_JWT_SECRET,
+      });
+
+      // Get the user from the db
+      const user = await this.userModel.findById(payload.sub);
+      if (!user) throw new UnauthorizedException('User not found');
+
+      // Check if user has a stored refresh token
+      if (!user.refreshToken) throw new UnauthorizedException('No refresh token found');
+
+      // Compare provided refresh token with the stored hashed refresh token
+      const isValid = await bcrypt.compare(refreshToken, user.refreshToken);
+        
+      // If not valid, revoke tokens and throw error
+      if (!isValid) {
+        user.refreshToken = '';
+        await user.save();
+        throw new UnauthorizedException('Invalid or consumed refresh token. Tokens revoked.');
+      }
+
+      // Rotate tokens: create new refresh token and access token
+      const newRefreshToken = await this.jwtService.signAsync(
+        { sub: String(user._id), email: user.email },
+        { secret: process.env.REFRESH_JWT_SECRET, expiresIn: '7d' }
+      );
+      const hashedNewRefreshToken = await bcrypt.hash(newRefreshToken, 10);
+
+      // Store the new hashed refresh token in the database
+      user.refreshToken = hashedNewRefreshToken;
+      await user.save();
+
+      // Make new access token
+      const newAccessToken = await this.jwtService.signAsync(
+        { sub: String(user._id), email: user.email },
+        { secret: process.env.JWT_SECRET, expiresIn: '1h' }
+      );
+
+      // Return the new tokens
+      return {
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken,
+      };
+    }
+    catch{throw new UnauthorizedException('Invalid or expired refresh token');}
+  }
+
+  async logout(userId: string): Promise<{ message: string }> {
+    await this.userModel.findByIdAndUpdate(userId, { refreshToken: null });
+    return { message: 'Logged out successfully' };
   }
 }

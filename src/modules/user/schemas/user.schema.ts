@@ -14,5 +14,8 @@ export class User extends Document {
 
   @Prop()
   avatar?: string;
+
+  @Prop({ type: String, required: false, nullable: true })
+  refreshToken?: string;
 }
 export const UserSchema = SchemaFactory.createForClass(User);
